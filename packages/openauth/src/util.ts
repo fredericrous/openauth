@@ -17,7 +17,11 @@ export const ISSUER_BASE_CTX_KEY = "openauth.issuerBase" as const
 export type IssuerBaseCtxKey = typeof ISSUER_BASE_CTX_KEY
 
 export function getRelativeUrl(ctx: Context, path: string) {
-  const baseOverride = ctx.get(ISSUER_BASE_CTX_KEY) as string | undefined
+  // Guarded — tests pass mock contexts that don't implement `get`.
+  const baseOverride =
+    typeof ctx.get === "function"
+      ? (ctx.get(ISSUER_BASE_CTX_KEY) as string | undefined)
+      : undefined
   if (baseOverride) {
     return new URL(path, baseOverride).toString()
   }
