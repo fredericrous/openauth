@@ -66,21 +66,21 @@ const DATABASE_URL =
 //
 // When unset, openauth's default single-string `aud` behavior is kept.
 function parseAudiences(raw: string): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
+  const out: Record<string, string[]> = {}
   for (const seg of raw.split(";")) {
-    const trimmed = seg.trim();
-    if (!trimmed) continue;
-    const [clientID, audsRaw] = trimmed.split(":", 2);
-    if (!clientID || !audsRaw) continue;
+    const trimmed = seg.trim()
+    if (!trimmed) continue
+    const [clientID, audsRaw] = trimmed.split(":", 2)
+    if (!clientID || !audsRaw) continue
     const auds = audsRaw
       .split(",")
       .map((s) => s.trim())
-      .filter(Boolean);
-    if (auds.length > 0) out[clientID] = auds;
+      .filter(Boolean)
+    if (auds.length > 0) out[clientID] = auds
   }
-  return out;
+  return out
 }
-const AUDIENCES = parseAudiences(process.env["OPENAUTH_AUDIENCES"] ?? "");
+const AUDIENCES = parseAudiences(process.env["OPENAUTH_AUDIENCES"] ?? "")
 
 const transporter: Transporter | null = SMTP_URL
   ? createTransport(SMTP_URL)
