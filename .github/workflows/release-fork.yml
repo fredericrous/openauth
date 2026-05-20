@@ -1,0 +1,85 @@
+name: Release fork package
+
+# Tag-triggered npm publish for the @fredericrous/openauth fork.
+# Tag format: `@fredericrous/openauth@<semver>` (e.g.
+# `@fredericrous/openauth@0.5.1`). Replaces the upstream changesets
+# flow in release.yml — we don't use changesets on the fork.
+
+on:
+  push:
+    tags:
+      - "@fredericrous/openauth@*"
+
+permissions:
+  contents: write # GH release
+  packages: write # publish to npm.pkg.github.com
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # generate_release_notes needs full history
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node + GHCR registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@fredericrous"
+
+      - name: Resolve version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Tag shape: @fredericrous/openauth@<semver>
+          VERSION="${TAG##*@}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (version=$VERSION)"
+
+      - name: Validate package.json matches tag
+        # Fail fast if the tag was placed on a commit whose
+        # package.json still has the old version. Prevents publishing
+        # a tarball whose internal name@version disagrees with the
+        # registry tag.
+        run: |
+          PKGV=$(jq -r '.version' packages/openauth/package.json)
+          TAGV="${{ steps.ver.outputs.version }}"
+          if [ "$PKGV" != "$TAGV" ]; then
+            echo "::error::package.json version ($PKGV) != tag ($TAGV)"
+            exit 1
+          fi
+
+      - name: Install + build + test
+        run: |
+          bun install
+          cd packages/openauth
+          bun run build
+          bun test
+
+      - name: Publish to GHCR npm
+        # `publishConfig.registry` in package.json points at
+        # npm.pkg.github.com; setup-node above wrote the auth token
+        # for the @fredericrous scope into ~/.npmrc.
+        run: |
+          cd packages/openauth
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: "@fredericrous/openauth ${{ steps.ver.outputs.version }}"
+          generate_release_notes: true
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
