@@ -197,7 +197,12 @@ import { encryptionKeys, legacySigningKeys, signingKeys } from "./keys.js"
 import { validatePKCE } from "./pkce.js"
 import { Select } from "./ui/select.js"
 import { setTheme, Theme } from "./ui/theme.js"
-import { getRelativeUrl, isDomainMatch, lazy } from "./util.js"
+import {
+  ISSUER_BASE_CTX_KEY,
+  getRelativeUrl,
+  isDomainMatch,
+  lazy,
+} from "./util.js"
 import { DynamoStorage } from "./storage/dynamo.js"
 import { MemoryStorage } from "./storage/memory.js"
 import { cors } from "hono/cors"
@@ -461,6 +466,31 @@ export interface IssuerInput<
    * ```
    */
   audiences?: Record<string, string[]>
+  /**
+   * Override the URL openauth uses for self-referential links — the
+   * JWT `iss` claim, the discovery `/.well-known/oauth-authorization-server`
+   * payload, the OAuth authorize/callback redirects.
+   *
+   * By default openauth derives this from the incoming request URL +
+   * `x-forwarded-*` headers. That works behind a well-behaved L7
+   * proxy that sets `x-forwarded-host`/`-proto`/`-port`, but not all
+   * gateways send `x-forwarded-port`, in which case the internal
+   * listening port (e.g. `:3000`) leaks into the iss claim and
+   * downstream JWT verifiers reject the token on exact-match issuer
+   * check.
+   *
+   * Setting this to the public origin (e.g.
+   * `"https://auth.example.com"`) pins the base URL deterministically.
+   *
+   * @example
+   * ```ts
+   * issuer({
+   *   issuer: "https://auth.example.com",
+   *   ...
+   * })
+   * ```
+   */
+  issuer?: string
 }
 
 /**
@@ -762,8 +792,19 @@ export function issuer<
   const app = new Hono<{
     Variables: {
       authorization: AuthorizationState
+      [ISSUER_BASE_CTX_KEY]: string
     }
   }>().use(logger())
+
+  // Publish the static-issuer override (IssuerInput.issuer) on every
+  // request's ctx so getRelativeUrl picks it up. See util.ts and the
+  // `issuer` field doc on IssuerInput for the motivation.
+  if (input.issuer) {
+    app.use(async (c, next) => {
+      c.set(ISSUER_BASE_CTX_KEY, input.issuer!)
+      await next()
+    })
+  }
 
   for (const [name, value] of Object.entries(input.providers)) {
     const route = new Hono<any>()

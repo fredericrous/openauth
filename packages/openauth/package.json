@@ -1,6 +1,6 @@
 {
   "name": "@fredericrous/openauth",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "type": "module",
   "description": "Fork of @openauthjs/openauth (anomalyco) with extensions used by fredericrous projects — see CHANGELOG-FORK.md.",
   "repository": {

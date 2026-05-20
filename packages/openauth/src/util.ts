@@ -4,7 +4,23 @@ export type Prettify<T> = {
   [K in keyof T]: T[K]
 }
 
+/**
+ * Hono ctx key used by issuer.ts to publish the configured static
+ * issuer URL (IssuerInput.issuer). When set, getRelativeUrl rebases
+ * onto it — bypassing request-URL inspection entirely. Without this
+ * override the JWT `iss` ends up as e.g.
+ * `https://auth.example.com:3000` (port leaks from listening port
+ * + unset x-forwarded-port) and any exact-match issuer verifier
+ * rejects it.
+ */
+export const ISSUER_BASE_CTX_KEY = "openauth.issuerBase" as const
+export type IssuerBaseCtxKey = typeof ISSUER_BASE_CTX_KEY
+
 export function getRelativeUrl(ctx: Context, path: string) {
+  const baseOverride = ctx.get(ISSUER_BASE_CTX_KEY) as string | undefined
+  if (baseOverride) {
+    return new URL(path, baseOverride).toString()
+  }
   const result = new URL(path, ctx.req.url)
   result.host = ctx.req.header("x-forwarded-host") || result.host
   result.protocol = ctx.req.header("x-forwarded-proto") || result.protocol

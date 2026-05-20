@@ -82,6 +82,14 @@ function parseAudiences(raw: string): Record<string, string[]> {
 }
 const AUDIENCES = parseAudiences(process.env["OPENAUTH_AUDIENCES"] ?? "")
 
+// Public origin to embed in the JWT `iss` claim, discovery doc, and
+// authorize/callback redirect URLs. When unset, openauth derives the
+// URL from the incoming request — which leaks the internal listening
+// port `:3000` when the gateway doesn't send `x-forwarded-port`. Set
+// this to the public hostname (no trailing slash) in any production
+// deployment behind a proxy.
+const ISSUER_URL = process.env["OPENAUTH_ISSUER_URL"] ?? "";
+
 const transporter: Transporter | null = SMTP_URL
   ? createTransport(SMTP_URL)
   : null
@@ -117,6 +125,7 @@ const app = issuer({
   subjects,
   storage,
   audiences: AUDIENCES,
+  ...(ISSUER_URL ? { issuer: ISSUER_URL } : {}),
   providers: {
     password: PasswordProvider(
       PasswordUI({

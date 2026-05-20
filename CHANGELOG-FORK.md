@@ -5,6 +5,35 @@ upstream `@openauthjs/openauth` (anomalyco). Versioning resets to
 `0.5.0` at the fork point to make it clear we're not claiming
 compatibility with future upstream versions of the same minor.
 
+## 0.5.3 (2026-05-20) — `IssuerInput.issuer` static base URL
+
+### Added — `IssuerInput.issuer`
+
+`issuer({ issuer: "https://auth.example.com" })` pins the URL openauth
+uses for every self-referential link (JWT `iss` claim, discovery
+`/.well-known/oauth-authorization-server`, OAuth authorize/callback
+redirects). Bypasses request-URL inspection + `x-forwarded-*` headers
+entirely.
+
+**Motivation:** without this, openauth derives the URL from
+`ctx.req.url` + the `x-forwarded-*` headers. Most gateways send
+`x-forwarded-host` and `x-forwarded-proto`, but very few send
+`x-forwarded-port`. When the gateway omits it, the internal
+listening port (e.g. `:3000`) leaks into the iss claim:
+
+```
+"iss": "https://auth.example.com:3000"
+```
+
+Any downstream verifier doing exact-match on the issuer claim (jose's
+`jwtVerify({ issuer: "https://auth.example.com" })` does this)
+rejects the token with `unexpected "iss" claim value`. Pinning the
+issuer URL with this option produces a clean
+`"iss": "https://auth.example.com"`.
+
+Implementation: see `src/util.ts` (`ISSUER_BASE_CTX_KEY`), and the
+`if (input.issuer)` middleware block in `src/issuer.ts`.
+
 ## 0.5.2 (2026-05-20) — multi-audience access tokens
 
 ### Added — `IssuerInput.audiences`

@@ -589,6 +589,16 @@ export function createClient(input: ClientInput): Client {
     const internalBase = input.internalUrl.replace(/\/$/, "")
     const issuerHost = issuerUrl.host
     const issuerProto = issuerUrl.protocol.replace(":", "")
+    // x-forwarded-port: openauth's getRelativeUrl reads the
+    // x-forwarded-* headers and applies them to a URL parsed from
+    // the actual request URL. Setting `host` to a bare hostname does
+    // NOT clear the port from the parsed URL — so without explicit
+    // x-forwarded-port the internal :3000 leaks into the issuer
+    // claim, producing iss="https://auth.example.com:3000" which any
+    // exact-match issuer verifier rejects. Resolve the public default
+    // port (443/80) when issuerUrl.port is empty.
+    const issuerPort =
+      issuerUrl.port || (issuerProto === "https" ? "443" : "80")
     f = ((url: string, init?: RequestInit) => {
       let rewritten = url
       const headers = new Headers(init?.headers)
@@ -602,6 +612,8 @@ export function createClient(input: ClientInput): Client {
           headers.set("x-forwarded-host", issuerHost)
         if (!headers.has("x-forwarded-proto"))
           headers.set("x-forwarded-proto", issuerProto)
+        if (!headers.has("x-forwarded-port"))
+          headers.set("x-forwarded-port", issuerPort)
       }
       return baseFetch(rewritten, { ...init, headers })
     }) as FetchLike
