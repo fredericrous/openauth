@@ -88,7 +88,7 @@ const AUDIENCES = parseAudiences(process.env["OPENAUTH_AUDIENCES"] ?? "")
 // port `:3000` when the gateway doesn't send `x-forwarded-port`. Set
 // this to the public hostname (no trailing slash) in any production
 // deployment behind a proxy.
-const ISSUER_URL = process.env["OPENAUTH_ISSUER_URL"] ?? "";
+const ISSUER_URL = process.env["OPENAUTH_ISSUER_URL"] ?? ""
 
 const transporter: Transporter | null = SMTP_URL
   ? createTransport(SMTP_URL)
