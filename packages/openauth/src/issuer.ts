@@ -436,6 +436,31 @@ export interface IssuerInput<
     },
     req: Request,
   ): Promise<boolean>
+  /**
+   * Per-client extra audiences for the access-token `aud` claim.
+   *
+   * By default the access token's `aud` is the requesting `client_id`
+   * as a single string. When this map has an entry for a given
+   * `client_id`, the token's `aud` becomes an array
+   * `[<client_id>, ...extras]`. JWT verifiers that check audience
+   * (per RFC 7519 §4.1.3) accept the token as long as their expected
+   * audience appears anywhere in the array.
+   *
+   * Use this for split-frontend / backend systems where the user's
+   * token is minted for a UI client but also needs to authenticate
+   * to a sibling API client: e.g. a `builder-webapp` token that
+   * builder-api should also accept.
+   *
+   * @example
+   * ```ts
+   * {
+   *   audiences: {
+   *     "builder-webapp": ["builder-api"],
+   *   },
+   * }
+   * ```
+   */
+  audiences?: Record<string, string[]>
 }
 
 /**
@@ -690,7 +715,16 @@ export function issuer<
         mode: "access",
         type: value.type,
         properties: value.properties,
-        aud: value.clientID,
+        // Per RFC 7519, `aud` may be a string or an array of strings.
+        // We emit the array form only when extra audiences are
+        // configured for this client_id — otherwise stay
+        // back-compatible with the single-string default.
+        aud: (() => {
+          const extras = input.audiences?.[value.clientID] ?? []
+          return extras.length > 0
+            ? [value.clientID, ...extras]
+            : value.clientID
+        })(),
         iss: issuer(ctx),
         sub: value.subject,
       })
