@@ -142,6 +142,35 @@ export interface ClientInput {
    */
   issuer?: string
   /**
+   * Optional alternative base URL used for **server-to-server calls** —
+   * `/.well-known/oauth-authorization-server`, `/token`, and the JWKS
+   * endpoint returned from discovery. Browser-facing flows
+   * (`authorize` redirect) and JWT `iss` verification keep using
+   * `issuer`.
+   *
+   * Use this when the public `issuer` URL is not reachable from the
+   * runtime that holds the client — e.g. in an Istio ambient-mode
+   * Kubernetes cluster the public hostname routes back through the
+   * gateway, which may enforce mTLS / WAF rules a pod doesn't satisfy.
+   * Pointing `internalUrl` at the ClusterIP / Service DNS keeps the
+   * exchange on-cluster.
+   *
+   * The client spoofs the `Host`, `X-Forwarded-Host`, and
+   * `X-Forwarded-Proto` headers to the values parsed from `issuer`
+   * when calling `internalUrl`, so the auth server still signs JWTs
+   * with `iss = <issuer>` and returns public URLs in discovery — your
+   * downstream verifiers don't need to know `internalUrl` exists.
+   *
+   * @example
+   * ```ts
+   * {
+   *   issuer: "https://auth.builder.example.com",
+   *   internalUrl: "http://openauth.openauth.svc.cluster.local:3000",
+   * }
+   * ```
+   */
+  internalUrl?: string
+  /**
    * Optionally, override the internally used fetch function.
    *
    * This is useful if you are using a polyfilled fetch function in your application and you
@@ -549,7 +578,34 @@ export function createClient(input: ClientInput): Client {
   const issuerCache = new Map<string, WellKnown>()
   const issuer = input.issuer || process.env.OPENAUTH_ISSUER
   if (!issuer) throw new Error("No issuer")
-  const f = input.fetch ?? fetch
+  const baseFetch = input.fetch ?? fetch
+  // If `internalUrl` is set, rewrite issuer-prefixed URLs to it and
+  // forward the originating Host so the auth server keeps signing
+  // JWTs with iss=<issuer> and emits public URLs in discovery. See
+  // the `internalUrl` field doc on ClientInput for the motivation.
+  let f: FetchLike = baseFetch
+  if (input.internalUrl && input.internalUrl !== issuer) {
+    const issuerUrl = new URL(issuer)
+    const internalBase = input.internalUrl.replace(/\/$/, "")
+    const issuerHost = issuerUrl.host
+    const issuerProto = issuerUrl.protocol.replace(":", "")
+    f = ((url: string, init?: RequestInit) => {
+      let rewritten = url
+      const headers = new Headers(init?.headers)
+      if (typeof url === "string" && url.startsWith(issuer)) {
+        rewritten = internalBase + url.slice(issuer.length)
+        // Spoof originating identity so openauth's request-context
+        // computes the public URL for any echoed endpoint and signs
+        // the JWT with iss=<issuer>.
+        if (!headers.has("host")) headers.set("host", issuerHost)
+        if (!headers.has("x-forwarded-host"))
+          headers.set("x-forwarded-host", issuerHost)
+        if (!headers.has("x-forwarded-proto"))
+          headers.set("x-forwarded-proto", issuerProto)
+      }
+      return baseFetch(rewritten, { ...init, headers })
+    }) as FetchLike
+  }
 
   async function getIssuer() {
     const cached = issuerCache.get(issuer!)
