@@ -111,6 +111,11 @@ const storage = await makeStorage()
 const subjects = createSubjects({
   user: v.object({
     id: v.string(),
+    // Preserved through the access-token `properties` so downstream
+    // services (and builder-webapp's session) can render the user's
+    // email instead of the hashed subject id. Note: callers that
+    // treat this as PII should respect the JWT's audience scope.
+    email: v.string(),
   }),
 })
 
@@ -156,6 +161,7 @@ const app = issuer({
     if (value.provider === "password") {
       return ctx.subject("user", {
         id: await getUser(value.email),
+        email: value.email,
       })
     }
     throw new Error("Unsupported provider")
