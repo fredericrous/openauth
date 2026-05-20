@@ -1,7 +1,10 @@
 # openauth issuer — Hono server behind @fredericrous/openauth.
 # bun-managed monorepo install; runtime is node + tsx so we keep the
 # deploy image small and avoid baking bun into prod.
-FROM mirror.gcr.io/library/oven/bun:1 AS deps
+# oven/bun isn't on mirror.gcr.io (only docker hub `library/*` is
+# mirrored). Pull straight from Docker Hub; build is on ubuntu-latest
+# so rate-limit risk is bounded.
+FROM oven/bun:1 AS deps
 WORKDIR /workspace
 COPY package.json bun.lockb bunfig.toml ./
 COPY packages/openauth/package.json packages/openauth/
