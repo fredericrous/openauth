@@ -5,6 +5,23 @@ upstream `@openauthjs/openauth` (anomalyco). Versioning resets to
 `0.5.0` at the fork point to make it clear we're not claiming
 compatibility with future upstream versions of the same minor.
 
+## 0.5.1 (2026-05-20) — build-script fix
+
+`script/build.ts` switched from per-file `Bun.build({ external: ["*"] })`
+to `tsc` for the `.js` output (declarations + `ui/base.tsx` bundle
+still use bun). bun 1.2+ aggressively dead-strips imports whose only
+use is a re-export, producing `index.js` with bare `export { X };`
+statements and no in-scope binding — node refuses to load with
+"Export 'X' is not defined in module". tsc preserves all imports
+and exports verbatim regardless of bun version. SDK now builds
+cleanly on bun 1.3.14 (and any future version).
+
+src/index.ts also rewritten from `export {} from "./..."` re-export
+syntax to plain `import` + `export` blocks — equivalent semantics,
+cleaner shape, doesn't depend on bun's re-export codegen.
+
+No public API change.
+
 ## 0.5.0 (2026-05-20) — forked from upstream 0.4.3
 
 ### Added — `ClientInput.internalUrl`
