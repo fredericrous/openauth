@@ -4,7 +4,12 @@
 # oven/bun isn't on mirror.gcr.io (only docker hub `library/*` is
 # mirrored). Pull straight from Docker Hub; build is on ubuntu-latest
 # so rate-limit risk is bounded.
-FROM oven/bun:1 AS deps
+#
+# Pinned to 1.1.42 because bun 1.2+ rewrites
+# `export { foo } from "./x.js"` (re-export) into a bare
+# `export { foo };` — strips the source path and produces a runtime
+# ReferenceError. Until upstream fixes that, hold the version.
+FROM oven/bun:1.1.42 AS deps
 WORKDIR /workspace
 COPY package.json bun.lockb bunfig.toml ./
 COPY packages/openauth/package.json packages/openauth/
