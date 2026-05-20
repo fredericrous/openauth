@@ -1,0 +1,111 @@
+name: Release issuer
+
+# Tag-triggered build + publish for apps/issuer. Tag format:
+# `openauth-issuer-v<semver>` (e.g. `openauth-issuer-v0.0.5`).
+#
+# Publishes:
+#   - Docker image: ghcr.io/fredericrous/openauth:<v>
+#   - Helm chart:   oci://ghcr.io/fredericrous/charts/openauth:<v>
+#
+# Both targets match what the homelab HelmRelease at
+# fredericrous/homelab:kubernetes/homelab/apps/openauth/helm-release.yaml
+# already consumes — no changes needed on the homelab side beyond
+# bumping the version pin.
+
+on:
+  push:
+    tags:
+      - "openauth-issuer-v*"
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/openauth
+  CHART_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
+  APP_DIR: apps/issuer
+  CHART_PATH: apps/issuer/chart/openauth
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#openauth-issuer-v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate package.json + Chart.yaml match tag
+        run: |
+          PKGV=$(jq -r '.version' "${APP_DIR}/package.json")
+          CHARTV=$(grep '^version:' "${CHART_PATH}/Chart.yaml" | awk '{print $2}')
+          TAGV="${{ steps.ver.outputs.version }}"
+          if [ "$PKGV" != "$TAGV" ] || [ "$CHARTV" != "$TAGV" ]; then
+            echo "::error::version mismatch — package.json=$PKGV chart=$CHARTV tag=$TAGV"
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }}
+
+      - name: Build + push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.APP_DIR }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=openauth-issuer
+          cache-to: type=gha,mode=max,scope=openauth-issuer
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Package + push Helm chart
+        env:
+          HELM_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$HELM_REGISTRY_TOKEN" | helm registry login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
+          helm package "${CHART_PATH}" --destination /tmp
+          helm push "/tmp/openauth-${{ steps.ver.outputs.version }}.tgz" \
+            "${CHART_OCI_REPO}"
+
+      - name: GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: "openauth issuer ${{ steps.ver.outputs.version }}"
+          generate_release_notes: true
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}

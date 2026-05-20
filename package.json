@@ -4,8 +4,7 @@
   "type": "module",
   "workspaces": [
     "packages/openauth",
-    "examples/issuer/*",
-    "examples/client/*"
+    "apps/*"
   ],
   "scripts": {
     "release": "bun run --filter=\"@openauthjs/openauth\" build && changeset publish"

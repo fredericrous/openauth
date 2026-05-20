@@ -1,0 +1,29 @@
+{
+  "name": "@fredericrous/openauth-issuer",
+  "version": "0.0.5",
+  "private": true,
+  "description": "Hono-based OpenAuth issuer with Postgres storage + nodemailer SMTP. Default deploy target for fredericrous projects.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "echo '(no tests yet)'",
+    "build": "echo '(runtime is ts via tsx; no separate build step)'",
+    "start": "tsx ./src/index.ts"
+  },
+  "dependencies": {
+    "@effect/sql": "^0.51.1",
+    "@effect/sql-pg": "^0.52.1",
+    "@fredericrous/openauth": "workspace:*",
+    "@hono/node-server": "2.0.2",
+    "effect": "3.21.2",
+    "hono": "4.12.19",
+    "nodemailer": "^6.9.16",
+    "valibot": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/nodemailer": "^6.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,62 @@
+image:
+  repository: ghcr.io/fredericrous/openauth
+  # Tag is set by the release workflow (or per-release values override).
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# v1 single-pod; MemoryStorage state is persisted to a PVC.
+replicaCount: 1
+
+http:
+  port: 3000
+
+env:
+  OPENAUTH_PORT: "3000"
+  OPENAUTH_PERSIST_PATH: "/data/openauth.json"
+  # Set to smtp://relay.dkim-manager.svc.cluster.local.:25 to wire the
+  # homelab SMTP relay for password-reset emails. Empty = codes logged
+  # to stdout (acceptable for early access; users can be reset manually).
+  OPENAUTH_SMTP_URL: ""
+
+persistence:
+  enabled: true
+  size: 1Gi
+  # Empty = use the cluster default (or set explicitly).
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  mountPath: /data
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /.well-known/openid-configuration
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /.well-known/openid-configuration
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 10
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
