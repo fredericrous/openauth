@@ -27,7 +27,9 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Pinned — bun 1.2+ mangles re-export source paths in the
+          # SDK build (see apps/issuer/Dockerfile for the full story).
+          bun-version: 1.1.42
 
       - name: Setup Node + GHCR registry
         uses: actions/setup-node@v4
