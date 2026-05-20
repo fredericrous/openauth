@@ -1,6 +1,6 @@
 {
   "name": "@fredericrous/openauth-issuer",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "private": true,
   "description": "Hono-based OpenAuth issuer with Postgres storage + nodemailer SMTP. Default deploy target for fredericrous projects.",
   "type": "module",

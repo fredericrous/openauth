@@ -52,6 +52,36 @@ const DATABASE_URL =
     ? `postgres://${encodeURIComponent(process.env["PG_USER"] ?? "")}:${encodeURIComponent(process.env["PG_PASS"] ?? "")}@${process.env["PG_HOST"]}:${process.env["PG_PORT"] ?? "5432"}/${process.env["PG_DB"] ?? ""}`
     : "");
 
+// ----------------------------------------------------- audiences config
+//
+// `OPENAUTH_AUDIENCES` shape: comma-separated `<client_id>:<aud1>,<aud2>,...`
+// segments separated by `;`. Each segment maps a client_id to the
+// extra audiences its tokens should carry. The client_id itself is
+// always included; only list the *additional* audiences.
+//
+// Example:
+//   OPENAUTH_AUDIENCES="builder-webapp:builder-api;admin-webapp:builder-api,builder-admin"
+// → builder-webapp tokens get aud=["builder-webapp","builder-api"]
+// → admin-webapp tokens get aud=["admin-webapp","builder-api","builder-admin"]
+//
+// When unset, openauth's default single-string `aud` behavior is kept.
+function parseAudiences(raw: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const seg of raw.split(";")) {
+    const trimmed = seg.trim();
+    if (!trimmed) continue;
+    const [clientID, audsRaw] = trimmed.split(":", 2);
+    if (!clientID || !audsRaw) continue;
+    const auds = audsRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (auds.length > 0) out[clientID] = auds;
+  }
+  return out;
+}
+const AUDIENCES = parseAudiences(process.env["OPENAUTH_AUDIENCES"] ?? "");
+
 const transporter: Transporter | null = SMTP_URL
   ? createTransport(SMTP_URL)
   : null;
@@ -86,6 +116,7 @@ async function getUser(email: string): Promise<string> {
 const app = issuer({
   subjects,
   storage,
+  audiences: AUDIENCES,
   providers: {
     password: PasswordProvider(
       PasswordUI({

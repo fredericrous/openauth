@@ -5,6 +5,38 @@ upstream `@openauthjs/openauth` (anomalyco). Versioning resets to
 `0.5.0` at the fork point to make it clear we're not claiming
 compatibility with future upstream versions of the same minor.
 
+## 0.5.2 (2026-05-20) — multi-audience access tokens
+
+### Added — `IssuerInput.audiences`
+
+`issuer({ ..., audiences })` accepts a `Record<client_id, string[]>`
+map of extra audiences to embed in the access-token `aud` claim. By
+default the token's `aud` is the requesting client_id as a single
+string (RFC 7519 §4.1.3). When this map has an entry for a client_id,
+the token's `aud` becomes an array `[<client_id>, ...extras]`.
+
+**Motivation:** in a multi-service backend, the user's UI client
+(e.g. `builder-webapp`) holds the access token, but the same token
+needs to authenticate to sibling APIs (e.g. `builder-api`). Without
+multi-audience tokens, each downstream API's JWT verifier rejects
+the token on `aud` mismatch (401). Multi-audience is the standard
+OIDC pattern for this; the alternative is per-API token exchange
+(RFC 8693), which is heavier.
+
+```ts
+issuer({
+  audiences: {
+    "builder-webapp": ["builder-api"],
+  },
+  ...
+})
+// → tokens for client_id="builder-webapp" carry
+//   aud=["builder-webapp", "builder-api"]
+```
+
+When the map is empty or unset, the previous single-string `aud`
+behavior is preserved — no breaking change.
+
 ## 0.5.1 (2026-05-20) — build-script fix
 
 `script/build.ts` switched from per-file `Bun.build({ external: ["*"] })`
