@@ -1,0 +1,11 @@
+# Helm chart templates contain Go-template syntax inside YAML; prettier
+# can't parse them and the upstream `format` workflow runs prettier
+# against `**/*.{json,md,yaml,yml,…}` indiscriminately.
+apps/**/chart/**/templates/**
+
+# Build artifacts
+**/dist/**
+**/node_modules/**
+
+# Lockfiles
+bun.lockb
