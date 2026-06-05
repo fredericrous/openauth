@@ -126,10 +126,89 @@ async function getUser(email: string): Promise<string> {
   return Buffer.from(bytes).toString("base64url")
 }
 
+// ----------------------------------------------------- redirect allow-list
+//
+// openauth's default `allow` permits a redirect on localhost or the issuer's
+// own registrable domain. The native (Expo) app is a PUBLIC client whose
+// redirect is a CUSTOM-SCHEME deep link (e.g. durobuilder://auth), which the
+// default would reject. Permit the registered native client_id + its scheme;
+// every other client keeps the default behavior, copied verbatim from
+// @fredericrous/openauth so the existing web flow stays byte-identical.
+const NATIVE_CLIENT_ID =
+  process.env["OPENAUTH_NATIVE_CLIENT_ID"] ?? "builder-native"
+const NATIVE_REDIRECT_SCHEME =
+  process.env["OPENAUTH_NATIVE_REDIRECT_SCHEME"] ?? "durobuilder"
+
+const twoPartTlds = [
+  "co.uk",
+  "co.jp",
+  "co.kr",
+  "co.nz",
+  "co.za",
+  "co.in",
+  "com.au",
+  "com.br",
+  "com.cn",
+  "com.mx",
+  "com.tw",
+  "net.au",
+  "org.uk",
+  "ne.jp",
+  "ac.uk",
+  "gov.uk",
+  "edu.au",
+  "gov.au",
+]
+function isDomainMatch(a: string, b: string): boolean {
+  if (a === b) return true
+  const partsA = a.split(".")
+  const partsB = b.split(".")
+  const hasTwoPartTld = twoPartTlds.some(
+    (tld) => a.endsWith("." + tld) || b.endsWith("." + tld),
+  )
+  const numParts = hasTwoPartTld ? -3 : -2
+  const min = Math.min(partsA.length, partsB.length, numParts)
+  const tailA = partsA.slice(min).join(".")
+  const tailB = partsB.slice(min).join(".")
+  return tailA === tailB
+}
+
+async function allowRedirect(
+  input: { clientID: string; redirectURI: string; audience?: string },
+  req: Request,
+): Promise<boolean> {
+  // Native public client: a custom-scheme deep link.
+  if (input.clientID === NATIVE_CLIENT_ID) {
+    try {
+      if (
+        new URL(input.redirectURI).protocol === `${NATIVE_REDIRECT_SCHEME}:`
+      ) {
+        return true
+      }
+    } catch {
+      /* malformed → fall through to the default check */
+    }
+  }
+  // Default behavior (verbatim from openauth's built-in allow).
+  let redir: string
+  try {
+    redir = new URL(input.redirectURI).hostname
+  } catch {
+    return false
+  }
+  if (redir === "localhost" || redir === "127.0.0.1") return true
+  const forwarded = req.headers.get("x-forwarded-host")
+  const host = forwarded
+    ? new URL(`https://${forwarded}`).hostname
+    : new URL(req.url).hostname
+  return isDomainMatch(redir, host)
+}
+
 const app = issuer({
   subjects,
   storage,
   audiences: AUDIENCES,
+  allow: allowRedirect,
   ...(ISSUER_URL ? { issuer: ISSUER_URL } : {}),
   providers: {
     password: PasswordProvider(
