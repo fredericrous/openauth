@@ -180,7 +180,9 @@ async function allowRedirect(
   // Native public client: a custom-scheme deep link.
   if (input.clientID === NATIVE_CLIENT_ID) {
     try {
-      if (new URL(input.redirectURI).protocol === `${NATIVE_REDIRECT_SCHEME}:`) {
+      if (
+        new URL(input.redirectURI).protocol === `${NATIVE_REDIRECT_SCHEME}:`
+      ) {
         return true
       }
     } catch {
