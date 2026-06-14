@@ -43,6 +43,13 @@ const PERSIST_PATH =
   process.env["OPENAUTH_PERSIST_PATH"] ?? "/data/openauth.json"
 const SMTP_URL = process.env["OPENAUTH_SMTP_URL"] ?? ""
 const FROM_ADDR = process.env["OPENAUTH_FROM"] ?? "noreply@daddyshome.fr"
+// Presentation for verification emails. A real display name, a working
+// Reply-To, and an HTML+text body materially lower the spam score versus
+// a bare "noreply@" + plain text — which matters because outbound leaves
+// from a residential IPv6 with no warm sending reputation.
+const FROM_NAME = process.env["OPENAUTH_FROM_NAME"] ?? "daddyshome"
+const REPLY_TO = process.env["OPENAUTH_REPLY_TO"] ?? "admin@daddyshome.fr"
+const BRAND = process.env["OPENAUTH_BRAND"] ?? FROM_NAME
 // Either set DATABASE_URL directly, or compose it from PG_* parts (the
 // homelab CNPG pattern: env.PG_HOST/PORT/DB inline + valueFrom the
 // openauth-db-app secret for PG_USER/PG_PASS).
@@ -215,11 +222,35 @@ const app = issuer({
       PasswordUI({
         sendCode: async (email, code) => {
           if (transporter) {
+            const text =
+              `Your ${BRAND} verification code is: ${code}\n\n` +
+              `Enter it on the page where you started signing in. ` +
+              `The code expires shortly.\n\n` +
+              `If you didn't request this, you can safely ignore this email.\n`
+            const html =
+              `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;color:#1a1a1a;line-height:1.5">` +
+              `<p>Your ${BRAND} verification code is:</p>` +
+              `<p style="font-size:28px;font-weight:700;letter-spacing:4px;margin:16px 0">${code}</p>` +
+              `<p>Enter it on the page where you started signing in. The code expires shortly.</p>` +
+              `<p style="color:#666;font-size:13px;margin-top:24px">If you didn't request this, you can safely ignore this email.</p>` +
+              `</div>`
             await transporter.sendMail({
-              from: FROM_ADDR,
+              // Object form so a real display name rides along even when
+              // OPENAUTH_FROM is a bare address.
+              from: FROM_ADDR.includes("<")
+                ? FROM_ADDR
+                : { name: FROM_NAME, address: FROM_ADDR },
               to: email,
-              subject: "Your verification code",
-              text: `Your verification code is: ${code}\n\nIf you didn't request this, ignore this email.\n`,
+              replyTo: REPLY_TO,
+              subject: `${code} is your ${BRAND} verification code`,
+              text,
+              html,
+              headers: {
+                // Mark as machine-generated transactional mail so receivers
+                // (and any auto-responders) treat it correctly.
+                "Auto-Submitted": "auto-generated",
+                "X-Auto-Response-Suppress": "All",
+              },
             })
           } else {
             // eslint-disable-next-line no-console
