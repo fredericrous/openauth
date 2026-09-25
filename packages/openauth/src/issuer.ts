@@ -172,10 +172,26 @@ export interface AuthorizationState {
   state: string
   client_id: string
   audience?: string
+  /**
+   * The RFC 8707 resource a registered client asked for. Only ever set for a
+   * client registered through `/register`; it becomes the token's `aud`.
+   */
+  resource?: string
   pkce?: {
     challenge: string
     method: "S256"
   }
+}
+
+/**
+ * A client registered through dynamic client registration (RFC 7591).
+ * Stored under `["oauth:client", client_id]`.
+ */
+export interface RegisteredClient {
+  client_id: string
+  client_name: string
+  redirect_uris: string[]
+  client_id_issued_at: number
 }
 
 /**
@@ -196,6 +212,7 @@ import { Storage, StorageAdapter } from "./storage/storage.js"
 import { encryptionKeys, legacySigningKeys, signingKeys } from "./keys.js"
 import { validatePKCE } from "./pkce.js"
 import { Select } from "./ui/select.js"
+import { Consent, type ConsentProps } from "./ui/consent.js"
 import { setTheme, Theme } from "./ui/theme.js"
 import {
   ISSUER_BASE_CTX_KEY,
@@ -491,6 +508,65 @@ export interface IssuerInput<
    * ```
    */
   issuer?: string
+  /**
+   * Turn on dynamic client registration (RFC 7591) for public clients, for
+   * callers such as MCP clients that cannot be pre-registered.
+   *
+   * A registered client is held to stricter rules than the static clients
+   * `allow` admits:
+   *
+   * - its redirect URI must be one it registered, exactly;
+   * - it must use the `code` flow with PKCE `S256`;
+   * - it must name one of `resources` (RFC 8707 `resource`) at authorize
+   *   and token time, and its access token's `aud` is that resource alone;
+   * - its refresh tokens only work for the same `client_id` and resource;
+   * - the user approves it on a consent screen before its first code.
+   *
+   * Static clients are unaffected.
+   *
+   * @example
+   * ```ts
+   * {
+   *   registration: {
+   *     resources: ["https://mcp.example.com/mcp"],
+   *     permission: "read and edit your sites",
+   *   },
+   * }
+   * ```
+   */
+  registration?: {
+    /** Canonical resource URIs a registered client may obtain tokens for. */
+    resources: string[]
+    /** What approving grants, completing "asks to …" on the consent page. */
+    permission?: string
+    /** Custom consent page. Defaults to the built-in `Consent()` UI. */
+    consent?: (props: ConsentProps, req: Request) => Promise<Response>
+  }
+}
+
+/** Longest registered `client_name` kept, in characters. */
+const MAX_CLIENT_NAME = 100
+/** Most redirect URIs one registration may declare. */
+const MAX_REDIRECT_URIS = 10
+
+/**
+ * Whether `uri` may be registered as a redirect: https anywhere, or http on a
+ * loopback host (native apps and CLIs, RFC 8252 §7.3). No fragments.
+ */
+function isRegistrableRedirect(uri: unknown): uri is string {
+  if (typeof uri !== "string") return false
+  let url
+  try {
+    url = new URL(uri)
+  } catch {
+    return false
+  }
+  if (url.hash) return false
+  if (url.protocol === "https:") return true
+  return (
+    url.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+  )
 }
 
 /**
@@ -599,29 +675,35 @@ export function issuer<
               return ctx.redirect(location.toString(), 302)
             }
             if (authorization.response_type === "code") {
-              const code = crypto.randomUUID()
-              await Storage.set(
-                storage,
-                ["oauth:code", code],
-                {
-                  type,
-                  properties,
-                  subject,
-                  redirectURI: authorization.redirect_uri,
-                  clientID: authorization.client_id,
-                  pkce: authorization.pkce,
-                  ttl: {
-                    access: subjectOpts?.ttl?.access ?? ttlAccess,
-                    refresh: subjectOpts?.ttl?.refresh ?? ttlRefresh,
-                  },
+              const grant: PendingGrant = {
+                type,
+                properties,
+                subject,
+                ttl: {
+                  access: subjectOpts?.ttl?.access ?? ttlAccess,
+                  refresh: subjectOpts?.ttl?.refresh ?? ttlRefresh,
                 },
-                60,
-              )
-              const location = new URL(authorization.redirect_uri)
-              location.searchParams.set("code", code)
-              location.searchParams.set("state", authorization.state || "")
-              await auth.unset(ctx, "authorization")
-              return ctx.redirect(location.toString(), 302)
+              }
+              // A registered client gets nothing until the user has said yes
+              // to it once. The pending grant waits in an encrypted cookie,
+              // bound to a nonce the consent form must echo.
+              if (
+                authorization.resource &&
+                !(await Storage.get(storage, [
+                  "oauth:consent",
+                  subject,
+                  authorization.client_id,
+                ]))
+              ) {
+                await auth.set(ctx, "consent", 60 * 10, {
+                  authorization,
+                  grant,
+                  nonce: crypto.randomUUID(),
+                } satisfies PendingConsent)
+                await auth.unset(ctx, "authorization")
+                return ctx.redirect(getRelativeUrl(ctx, "/consent"), 302)
+              }
+              return issueCode(ctx, authorization, grant)
             }
             throw new OauthError(
               "invalid_request",
@@ -674,6 +756,57 @@ export function issuer<
     storage,
   }
 
+  /** A login that finished, waiting for its code (or its consent). */
+  interface PendingGrant {
+    type: string
+    properties: any
+    subject: string
+    ttl: { access: number; refresh: number }
+  }
+
+  interface PendingConsent {
+    authorization: AuthorizationState
+    grant: PendingGrant
+    nonce: string
+  }
+
+  async function issueCode(
+    ctx: Context,
+    authorization: AuthorizationState,
+    grant: PendingGrant,
+  ) {
+    const code = crypto.randomUUID()
+    await Storage.set(
+      storage!,
+      ["oauth:code", code],
+      {
+        ...grant,
+        redirectURI: authorization.redirect_uri,
+        clientID: authorization.client_id,
+        pkce: authorization.pkce,
+        resource: authorization.resource,
+      },
+      60,
+    )
+    const location = new URL(authorization.redirect_uri)
+    location.searchParams.set("code", code)
+    location.searchParams.set("state", authorization.state || "")
+    await auth.unset(ctx, "authorization")
+    return ctx.redirect(location.toString(), 302)
+  }
+
+  async function registeredClient(
+    clientID: string,
+  ): Promise<RegisteredClient | undefined> {
+    if (!input.registration) return undefined
+    return (
+      (await Storage.get<RegisteredClient>(storage!, [
+        "oauth:client",
+        clientID,
+      ])) ?? undefined
+    )
+  }
+
   async function getAuthorization(ctx: Context) {
     const match =
       (await auth.get(ctx, "authorization")) || ctx.get("authorization")
@@ -708,6 +841,8 @@ export function issuer<
       properties: any
       subject: string
       clientID: string
+      /** Set for a registered client: the token's sole audience. */
+      resource?: string
       ttl: {
         access: number
         refresh: number
@@ -750,6 +885,7 @@ export function issuer<
         // configured for this client_id — otherwise stay
         // back-compatible with the single-string default.
         aud: (() => {
+          if (value.resource) return value.resource
           const extras = input.audiences?.[value.clientID] ?? []
           return extras.length > 0
             ? [value.clientID, ...extras]
@@ -857,6 +993,16 @@ export function issuer<
         token_endpoint: `${iss}/token`,
         jwks_uri: `${iss}/.well-known/jwks.json`,
         response_types_supported: ["code", "token"],
+        grant_types_supported: [
+          "authorization_code",
+          "refresh_token",
+          "client_credentials",
+        ],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: ["none"],
+        ...(input.registration
+          ? { registration_endpoint: `${iss}/register` }
+          : {}),
       })
     },
   )
@@ -890,6 +1036,7 @@ export function issuer<
           clientID: string
           redirectURI: string
           subject: string
+          resource?: string
           ttl: {
             access: number
             refresh: number
@@ -924,6 +1071,26 @@ export function issuer<
             403,
           )
         }
+        // A resource-bound code is redeemed for the same resource only
+        // (RFC 8707 §2.2), and it was issued with PKCE — never without.
+        if (payload.resource) {
+          if (form.get("resource")?.toString() !== payload.resource)
+            return c.json(
+              {
+                error: "invalid_target",
+                error_description: "resource must match the authorization",
+              },
+              400,
+            )
+          if (!payload.pkce)
+            return c.json(
+              {
+                error: "invalid_grant",
+                error_description: "Authorization code was issued without PKCE",
+              },
+              400,
+            )
+        }
 
         if (payload.pkce) {
           const codeVerifier = form.get("code_verifier")?.toString()
@@ -956,6 +1123,7 @@ export function issuer<
         await Storage.remove(storage, key)
         return c.json({
           access_token: tokens.access,
+          token_type: "Bearer",
           expires_in: tokens.expiresIn,
           refresh_token: tokens.refresh,
         })
@@ -980,6 +1148,7 @@ export function issuer<
           properties: any
           clientID: string
           subject: string
+          resource?: string
           ttl: {
             access: number
             refresh: number
@@ -995,6 +1164,27 @@ export function issuer<
             },
             400,
           )
+        }
+        // A registered client's refresh token is bound to that client and
+        // its resource: nobody else may redeem it, nor re-aim it.
+        if (payload.resource) {
+          if (form.get("client_id")?.toString() !== payload.clientID)
+            return c.json(
+              {
+                error: "invalid_grant",
+                error_description: "Refresh token was issued to another client",
+              },
+              400,
+            )
+          const requested = form.get("resource")?.toString()
+          if (requested !== undefined && requested !== payload.resource)
+            return c.json(
+              {
+                error: "invalid_target",
+                error_description: "resource must match the original grant",
+              },
+              400,
+            )
         }
         const generateRefreshToken = !payload.timeUsed
         if (ttlRefreshReuse <= 0) {
@@ -1024,6 +1214,7 @@ export function issuer<
         })
         return c.json({
           access_token: tokens.access,
+          token_type: "Bearer",
           refresh_token: tokens.refresh,
           expires_in: tokens.expiresIn,
         })
@@ -1038,7 +1229,9 @@ export function issuer<
           return c.json({ error: "invalid `provider` query parameter" }, 400)
         if (!match.client)
           return c.json(
-            { error: "this provider does not support client_credentials" },
+            {
+              error: "this provider does not support client_credentials",
+            },
             400,
           )
         const clientID = form.get("client_id")
@@ -1068,6 +1261,7 @@ export function issuer<
               })
               return c.json({
                 access_token: tokens.access,
+                token_type: "Bearer",
                 refresh_token: tokens.refresh,
               })
             },
@@ -1091,6 +1285,7 @@ export function issuer<
     const state = c.req.query("state")
     const client_id = c.req.query("client_id")
     const audience = c.req.query("audience")
+    const resource = c.req.query("resource")
     const code_challenge = c.req.query("code_challenge")
     const code_challenge_method = c.req.query("code_challenge_method")
     const authorization: AuthorizationState = {
@@ -1125,7 +1320,31 @@ export function issuer<
       await input.start(c.req.raw)
     }
 
-    if (
+    const registered = await registeredClient(client_id)
+    if (registered) {
+      // Checked before anything can redirect: an unregistered redirect URI
+      // must not receive even an error.
+      if (!registered.redirect_uris.includes(redirect_uri))
+        return c.text("redirect_uri is not registered for this client", {
+          status: 400,
+        })
+      if (response_type !== "code")
+        throw new OauthError(
+          "unsupported_response_type",
+          "Registered clients must use the code flow",
+        )
+      if (!code_challenge || code_challenge_method !== "S256")
+        throw new OauthError(
+          "invalid_request",
+          "Registered clients must use PKCE with S256",
+        )
+      if (!resource || !input.registration!.resources.includes(resource))
+        throw new OauthError(
+          "invalid_target",
+          "resource must name a resource this issuer serves",
+        )
+      authorization.resource = resource
+    } else if (
       !(await allow()(
         {
           clientID: client_id,
@@ -1153,6 +1372,155 @@ export function issuer<
       ),
     )
   })
+
+  if (input.registration) {
+    const registration = input.registration
+    const consentPage = registration.consent ?? Consent()
+
+    app.post(
+      "/register",
+      cors({
+        origin: "*",
+        allowHeaders: ["*"],
+        allowMethods: ["POST"],
+        credentials: false,
+      }),
+      async (c) => {
+        const invalid = (
+          description: string,
+          error = "invalid_client_metadata",
+        ) => c.json({ error, error_description: description }, 400)
+        let body: Record<string, unknown>
+        try {
+          body = await c.req.json()
+        } catch {
+          return invalid("Body must be a JSON object")
+        }
+        if (typeof body !== "object" || body === null)
+          return invalid("Body must be a JSON object")
+
+        const uris = body.redirect_uris
+        if (
+          !Array.isArray(uris) ||
+          uris.length === 0 ||
+          uris.length > MAX_REDIRECT_URIS
+        )
+          return invalid(
+            `redirect_uris must list 1-${MAX_REDIRECT_URIS} URIs`,
+            "invalid_redirect_uri",
+          )
+        if (!uris.every(isRegistrableRedirect))
+          return invalid(
+            "redirect_uris must be https, or http on a loopback host, without a fragment",
+            "invalid_redirect_uri",
+          )
+        const method = body.token_endpoint_auth_method
+        if (method !== undefined && method !== "none")
+          return invalid(
+            "Only public clients (token_endpoint_auth_method none)",
+          )
+        const grants = body.grant_types
+        if (
+          grants !== undefined &&
+          !(
+            Array.isArray(grants) &&
+            grants.every((g) =>
+              ["authorization_code", "refresh_token"].includes(g),
+            )
+          )
+        )
+          return invalid("grant_types may be authorization_code, refresh_token")
+        const responses = body.response_types
+        if (
+          responses !== undefined &&
+          !(Array.isArray(responses) && responses.every((r) => r === "code"))
+        )
+          return invalid("response_types may only be code")
+        const rawName = body.client_name
+        if (rawName !== undefined && typeof rawName !== "string")
+          return invalid("client_name must be a string")
+        const name =
+          (rawName ?? "")
+            .replace(/[\u0000-\u001f\u007f]/g, "")
+            .trim()
+            .slice(0, MAX_CLIENT_NAME) || "Unnamed application"
+
+        const client: RegisteredClient = {
+          client_id: `dcr_${crypto.randomUUID()}`,
+          client_name: name,
+          redirect_uris: uris as string[],
+          client_id_issued_at: Math.floor(Date.now() / 1000),
+        }
+        await Storage.set(storage!, ["oauth:client", client.client_id], client)
+        return c.json(
+          {
+            ...client,
+            grant_types: ["authorization_code", "refresh_token"],
+            response_types: ["code"],
+            token_endpoint_auth_method: "none",
+          },
+          201,
+        )
+      },
+    )
+
+    app.get("/consent", async (c) => {
+      const pending = (await auth.get(c, "consent")) as
+        PendingConsent | undefined
+      if (!pending)
+        return c.text("No authorization is waiting for consent", {
+          status: 400,
+        })
+      const client = await registeredClient(pending.authorization.client_id)
+      if (!client)
+        return c.text("The requesting client is no longer registered", {
+          status: 400,
+        })
+      return auth.forward(
+        c,
+        await consentPage(
+          {
+            clientName: client.client_name,
+            redirectHost: new URL(pending.authorization.redirect_uri).host,
+            permission:
+              registration.permission ?? "access your account on your behalf",
+            form: {
+              action: getRelativeUrl(c, "/consent"),
+              nonce: pending.nonce,
+            },
+          },
+          c.req.raw,
+        ),
+      )
+    })
+
+    app.post("/consent", async (c) => {
+      const pending = (await auth.get(c, "consent")) as
+        PendingConsent | undefined
+      const form = await c.req.formData()
+      // The nonce lives only in the page the user was shown; a cross-site
+      // POST riding the cookie cannot know it.
+      if (!pending || form.get("nonce")?.toString() !== pending.nonce)
+        return c.text("Consent request expired or invalid", {
+          status: 400,
+        })
+      await auth.unset(c, "consent")
+      const { authorization, grant } = pending
+      if (form.get("decision")?.toString() !== "approve") {
+        const url = new URL(authorization.redirect_uri)
+        url.searchParams.set("error", "access_denied")
+        url.searchParams.set("error_description", "The user denied access")
+        url.searchParams.set("state", authorization.state || "")
+        return c.redirect(url.toString(), 302)
+      }
+      await Storage.set(
+        storage!,
+        ["oauth:consent", grant.subject, authorization.client_id],
+        { approvedAt: Math.floor(Date.now() / 1000) },
+      )
+      return issueCode(c, authorization, grant)
+    })
+  }
 
   app.get("/userinfo", async (c) => {
     const header = c.req.header("Authorization")

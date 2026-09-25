@@ -129,10 +129,12 @@ const DEFAULT_COPY = {
    */
   button_continue: "Continue",
 } satisfies {
-  [key in `error_${
-    | PasswordLoginError["type"]
-    | PasswordRegisterError["type"]
-    | PasswordChangeError["type"]}`]: string
+  [
+    key in `error_${
+      | PasswordLoginError["type"]
+      | PasswordRegisterError["type"]
+      | PasswordChangeError["type"]}`
+  ]: string
 } & Record<string, string>
 
 type PasswordUICopy = typeof DEFAULT_COPY

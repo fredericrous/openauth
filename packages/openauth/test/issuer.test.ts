@@ -142,6 +142,7 @@ describe("client credentials flow", () => {
     const tokens = await response.json()
     expect(tokens).toStrictEqual({
       access_token: expectNonEmptyString,
+      token_type: "Bearer",
       refresh_token: expectNonEmptyString,
     })
     const verified = await client.verify(subjects, tokens.access_token)
@@ -221,6 +222,7 @@ describe("refresh token", () => {
     const refreshed = await response.json()
     expect(refreshed).toStrictEqual({
       access_token: expectNonEmptyString,
+      token_type: "Bearer",
       refresh_token: expectNonEmptyString,
       expires_in: expect.any(Number),
     })
@@ -247,6 +249,7 @@ describe("refresh token", () => {
     const refreshed = await response.json()
     expect(refreshed).toStrictEqual({
       access_token: expectNonEmptyString,
+      token_type: "Bearer",
       refresh_token: expectNonEmptyString,
       expires_in: expect.any(Number),
     })

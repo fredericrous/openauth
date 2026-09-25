@@ -23,6 +23,15 @@
  *                           PostgresStorage adapter replaces
  *                           MemoryStorage. Format:
  *                           postgres://<user>:<pw>@<host>:5432/<db>
+ *   OPENAUTH_REGISTRATION_RESOURCES
+ *                           Comma-separated canonical resource URIs (e.g.
+ *                           https://mcp.builder.daddyshome.fr/mcp). When
+ *                           set, POST /register (RFC 7591) is on and
+ *                           registered clients get tokens for exactly one
+ *                           of these, after a consent screen.
+ *   OPENAUTH_REGISTRATION_PERMISSION
+ *                           What approving grants, as the consent page
+ *                           completes "asks to …".
  */
 import { serve } from "@hono/node-server"
 import { issuer } from "@fredericrous/openauth"
@@ -96,6 +105,18 @@ const AUDIENCES = parseAudiences(process.env["OPENAUTH_AUDIENCES"] ?? "")
 // this to the public hostname (no trailing slash) in any production
 // deployment behind a proxy.
 const ISSUER_URL = process.env["OPENAUTH_ISSUER_URL"] ?? ""
+
+// Dynamic client registration, for MCP clients (Claude Code, claude.ai
+// connectors) that cannot be pre-registered. Off unless resources are named.
+const REGISTRATION_RESOURCES = (
+  process.env["OPENAUTH_REGISTRATION_RESOURCES"] ?? ""
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+const REGISTRATION_PERMISSION =
+  process.env["OPENAUTH_REGISTRATION_PERMISSION"] ??
+  "read and edit your sites through the MCP server"
 
 const transporter: Transporter | null = SMTP_URL
   ? createTransport(SMTP_URL)
@@ -217,6 +238,14 @@ const app = issuer({
   audiences: AUDIENCES,
   allow: allowRedirect,
   ...(ISSUER_URL ? { issuer: ISSUER_URL } : {}),
+  ...(REGISTRATION_RESOURCES.length > 0
+    ? {
+        registration: {
+          resources: REGISTRATION_RESOURCES,
+          permission: REGISTRATION_PERMISSION,
+        },
+      }
+    : {}),
   providers: {
     password: PasswordProvider(
       PasswordUI({
@@ -287,6 +316,7 @@ console.log(
     persistPath: DATABASE_URL ? null : PERSIST_PATH,
     storage: DATABASE_URL ? "postgres" : "memory",
     smtpConfigured: Boolean(SMTP_URL),
+    registrationResources: REGISTRATION_RESOURCES,
   }),
 )
 

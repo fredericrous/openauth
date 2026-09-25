@@ -26,7 +26,9 @@ export class OauthError extends Error {
       | "access_denied"
       | "unsupported_grant_type"
       | "server_error"
-      | "temporarily_unavailable",
+      | "temporarily_unavailable"
+      | "unsupported_response_type"
+      | "invalid_target",
     public description: string,
   ) {
     super(error + " - " + description)
