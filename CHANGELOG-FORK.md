@@ -5,6 +5,45 @@ upstream `@openauthjs/openauth` (anomalyco). Versioning resets to
 `0.5.0` at the fork point to make it clear we're not claiming
 compatibility with future upstream versions of the same minor.
 
+## 0.5.4 (2026-09-25) — dynamic client registration for MCP clients
+
+### Added — `IssuerInput.registration`
+
+`issuer({ registration: { resources: ["https://mcp.example.com/mcp"] } })`
+turns on `POST /register` (RFC 7591, public clients only) so MCP clients —
+which cannot be pre-registered — can obtain tokens for an MCP server.
+A registered client is held to stricter rules than static clients:
+
+- its `redirect_uri` must be one it registered, exactly (checked before
+  anything redirects — an unregistered URI gets a plain 400);
+- `response_type=code` with PKCE `S256` only;
+- it must send an RFC 8707 `resource` naming one of `resources`, at
+  `/authorize` AND at `/token`; the access token's `aud` is that resource
+  alone (no `audiences` extras);
+- its refresh token is redeemable only by the same `client_id`, and only
+  for the same resource;
+- before its first code for a user, the user approves it on a consent
+  screen (`ui/consent`, or `registration.consent`). The screen leads with
+  the redirect host, because a client's name is self-asserted. Approval is
+  stored at `["oauth:consent", subject, client_id]`; delete the key to
+  revoke. The consent POST carries a nonce from the rendered page, so a
+  cross-site POST riding the cookie cannot approve.
+
+Static clients behave exactly as before; a `resource` parameter from one is
+ignored.
+
+### Added — metadata
+
+`/.well-known/oauth-authorization-server` now lists `grant_types_supported`,
+`code_challenge_methods_supported: ["S256"]`,
+`token_endpoint_auth_methods_supported: ["none"]`, and
+`registration_endpoint` when registration is on.
+
+### Changed — `token_type` in token responses
+
+Every `/token` response now includes `token_type: "Bearer"` (RFC 6749
+§5.1 requires it; strict clients refuse a response without it). Additive.
+
 ## 0.5.3 (2026-05-20) — `IssuerInput.issuer` static base URL
 
 ### Added — `IssuerInput.issuer`
