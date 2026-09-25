@@ -1466,8 +1466,7 @@ export function issuer<
 
     app.get("/consent", async (c) => {
       const pending = (await auth.get(c, "consent")) as
-        | PendingConsent
-        | undefined
+        PendingConsent | undefined
       if (!pending)
         return c.text("No authorization is waiting for consent", {
           status: 400,
@@ -1497,8 +1496,7 @@ export function issuer<
 
     app.post("/consent", async (c) => {
       const pending = (await auth.get(c, "consent")) as
-        | PendingConsent
-        | undefined
+        PendingConsent | undefined
       const form = await c.req.formData()
       // The nonce lives only in the page the user was shown; a cross-site
       // POST riding the cookie cannot know it.
